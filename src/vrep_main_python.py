@@ -6,15 +6,16 @@ import pandas as pd
 from logic import *
 from agents import *
 from utils import *
-from node import *
 
 
-global state_, block_, x_, y_, dir_, x, y, e, w, n, s, theta 
+global state_, block_, x_, y_, xx_, yy_, dir_, x, y, e, w, n, s, theta, execCd 
 state_ = 1      # 1 - move forward on dir_
                 # 2 - check block_ wall and update KB
                 # 3 - Search path
 x_ = 0
 y_ = 0
+xx_ = 0
+yy_ = 0
 x = np.array([])
 y = np.array([])
 e = np.array([])
@@ -180,6 +181,15 @@ def find_block():
             return i
     return -1
 
+# find block for next possition if existed, otherwise return -1
+def find_block2():
+    for i in range(0,block_max):
+        dist_xx = abs(xx_ - x[i]) 
+        dist_yy = abs(yy_ - y[i])
+        if (dist_xx < 1 and dist_yy < 1):
+            return i
+    return -1
+
 # find new forward
 def find_forward(sensor_val, sensor_loc, clientID, left_motor_handle, right_motor_handle, sensor8,target):
     global state_
@@ -284,10 +294,10 @@ for i in range(1, 16+1):
         clientID, sensor_handle, vrep.simx_opmode_streaming)
     sensor_val = np.append(sensor_val, np.linalg.norm(detectedPoint))
 
+
 # PropKB
 kb = PropKB()
 print("1: kb.clauses = ", kb.clauses)
-# graph for depth first search
 
 # Initialize global parameters
 t = time.time()
@@ -306,6 +316,7 @@ y = np.append(y, 0)   # define new block with center coordinates
 x_ = 0
 y_ = 0
 info = ""
+question = ""
 
 while (time.time()-t) < 800:
     dir_ = get_dir(clientID, sensor8, target)
@@ -316,6 +327,7 @@ while (time.time()-t) < 800:
 
     sensor_val = read_sensors(clientID, sensor_h)
     print("Robot direction = "+str(dir_))
+
     # Read the sensors
     find_wall(sensor_val, sensor_loc, clientID, left_motor_handle, right_motor_handle)
     print("E =" + str( e[block_]))
@@ -327,8 +339,30 @@ while (time.time()-t) < 800:
     n_c = n_c + n[block_]
     s_c = s_c + s[block_]
     
-      # check for front wall
-    if (sensor_val[3]< .1 and sensor_val[4]<.1):
+    # check for front wall
+    front_block_found = False
+    front_block = find_block2()
+#    front_block = 1
+#    kb.tell("B1")
+    if (front_block > -1 ):
+        print(kb.clauses)
+        myArg = ""
+        find_val = str(front_block)
+        for val in kb.clauses:
+            if (str(val).find(find_val)> -1):
+                if (myArg > ""):
+                    myArg = myArg + " ^ "+ str(val) 
+                else:
+                    myArg = str(val)
+        myArg = myArg + " <=> B" + str(front_block)
+        if( tt_true(myArg) == True):
+            front_block_found = True
+        else:
+            front_block_found = False 
+#        myArg = "B"+str(front_block)
+#        if( kb.ask(myArg) == False ):
+#            print("Blocked in front of me!!!!")
+    if ((sensor_val[3]< .1 and sensor_val[4]<.1) or ( front_block_found)):
         step_back(clientID, left_motor_handle, right_motor_handle)
         find_forward(sensor_val, sensor_loc, clientID, left_motor_handle, right_motor_handle,sensor_h[7], target)
         dir_ = get_dir(clientID, sensor8, target)
@@ -385,7 +419,10 @@ while (time.time()-t) < 800:
         r = (0.5 * .3)
         x_ = x_ + r*math.sin(dir_*PI/180)
         y_ = y_ + r*math.cos(dir_*PI/180)
-        print(" (x, y) = " + str(x_) + " , "+ str(y_))
+        xx_ = x_ + 2*math.sin(dir_*PI/180)
+        yy_ = y_ + 2*math.sin(dir_*PI/180)
+        print(" (x_, y_) = " + str(x_) + " , "+ str(y_))
+        print(" (xx_, yy_) = " + str(xx_) + " , "+ str(yy_))
         dist_x = abs(x_ - x[block_]) 
         dist_y = abs(y_ - y[block_])
         step_length = 8/6
@@ -413,7 +450,7 @@ while (time.time()-t) < 800:
                 kb.tell(info+" >> " + old_info)
             if (old_info > "" and old_info[0] == "P" and info[0] == "B"):
                 kb.tell(info+" >> " + old_info)
-                print ("kb.clauses = ", kb.clauses)    
+#                print ("kb.clauses = ", kb.clauses)    
                 e = np.append(e, 0)
                 n = np.append(n, 0)
                 w = np.append(w, 0)
@@ -433,12 +470,10 @@ while (time.time()-t) < 800:
             if (walls_c == 2):
                 info = "P"+str(block_)
             if (walls_c >= 3 and state_ == 3):
-                info = "B"+str(block_)
-
+                info = "B"+str(block_ - 1)
         elif (dist_x > step_length or dist_y > step_length):
             block_ = block_max + 1
             block_max = block_
-            
             walls_c = 0
             max_c = max(e_c, w_c, s_c, n_c)
             if (state_ == 3 and min(e_c, w_c, s_c, n_c)==1):
@@ -461,7 +496,6 @@ while (time.time()-t) < 800:
                 state_ = 1
             if (walls_c >= 3 and state_ == 1):
                 info = "P"+str(block_)
-
                 state_ = 1
             kb.tell(info)
             if (old_info > "" and old_info[0] == "P" and info[0] == "P"):
@@ -480,7 +514,6 @@ while (time.time()-t) < 800:
             w_c = 0
             n_c = 0
             s_c = 0
-
     state_ = 1
     # center the robot by sensors values
     if (e[block_] == 1 and w[block_] == 1 and dir_ < 20 and dir_ > -20 and 
@@ -527,10 +560,10 @@ while (time.time()-t) < 800:
 
     # quick aline when there is space
     if (sensor_val[0] > .4):
-        right_turn(0.04, clientID, left_motor_handle, right_motor_handle)
+        right_turn(0.05, clientID, left_motor_handle, right_motor_handle)
         sensor_val = read_sensors(clientID, sensor_h)
     if (sensor_val[7] > .4 ):
-        left_turn(0.04, clientID, left_motor_handle, right_motor_handle)
+        left_turn(0.05, clientID, left_motor_handle, right_motor_handle)
         sensor_val = read_sensors(clientID, sensor_h)
 
 print("stop")
